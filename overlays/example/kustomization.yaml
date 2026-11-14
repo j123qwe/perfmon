@@ -1,0 +1,53 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+# Example site overlay. Copy this directory to overlays/<site> (untracked by
+# git) and set the ingress host, class, issuer, targets and admin login.
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Site-specific probe targets and (optionally) probe modules.
+configMapGenerator:
+  - name: perfmon-targets
+    namespace: perfmon
+    behavior: replace
+    files:
+      - targets.yaml
+  # Uncomment to give this site its own probe modules (e.g. source-pinned
+  # ICMP). Start from a copy of ../../base/prober/blackbox.yml.
+  # - name: perfmon-blackbox
+  #   namespace: perfmon
+  #   behavior: replace
+  #   files:
+  #     - blackbox.yml
+
+# Grafana admin login (only needed to edit; viewing is anonymous).
+# Create grafana-admin.env from grafana-admin.env.example; it is gitignored.
+secretGenerator:
+  - name: grafana-admin
+    namespace: perfmon
+    envs:
+      - grafana-admin.env
+
+patches:
+  # Ingress hostname, class and certificate issuer
+  - target: {kind: Ingress, name: grafana}
+    patch: |-
+      - op: replace
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+        value: letsencrypt-prod
+      - op: add
+        path: /spec/ingressClassName
+        value: traefik
+      - op: replace
+        path: /spec/rules/0/host
+        value: perfmon.example.com
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: perfmon.example.com
+  # Retention and disk. Args are positional: /args/1 is -retentionPeriod.
+  - target: {kind: StatefulSet, name: victoriametrics}
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/args/1
+        value: -retentionPeriod=30d

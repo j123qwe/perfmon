@@ -1,0 +1,5 @@
+# Site overlays are local to each router/cluster; only the example is tracked.
+overlays/*
+!overlays/example/
+# Grafana admin credentials
+grafana-admin.env

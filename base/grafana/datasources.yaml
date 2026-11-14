@@ -1,0 +1,14 @@
+apiVersion: 1
+datasources:
+  # VictoriaMetrics speaks the Prometheus query API, so the built-in
+  # Prometheus datasource is used (no plugin download needed at the edge).
+  - name: VictoriaMetrics
+    uid: victoriametrics
+    type: prometheus
+    access: proxy
+    url: http://victoriametrics.perfmon.svc:8428
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 1s
+      httpMethod: POST

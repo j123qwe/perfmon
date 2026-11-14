@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: perfmon
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: perfmon
+
+resources:
+  - namespace.yaml
+  - victoriametrics/statefulset.yaml
+  - victoriametrics/service.yaml
+  - prober/daemonset.yaml
+  - grafana/deployment.yaml
+  - grafana/service.yaml
+  - grafana/ingress.yaml
+
+# ConfigMaps get a content-hash suffix, so any change to targets, probe
+# modules or dashboards rolls the affected pods automatically on apply.
+configMapGenerator:
+  # WHAT to probe and how often. Overlays replace this file.
+  - name: perfmon-targets
+    files:
+      - targets.yaml
+  # HOW to probe (blackbox_exporter modules).
+  - name: perfmon-blackbox
+    files:
+      - blackbox.yml=prober/blackbox.yml
+  - name: perfmon-scrape
+    files:
+      - scrape.yml=prober/scrape.yml
+  - name: grafana-provisioning
+    files:
+      - datasources.yaml=grafana/datasources.yaml
+      - dashboards.yaml=grafana/dashboard-provider.yaml
+  - name: grafana-dashboards
+    files:
+      - grafana/dashboards/backhaul.json
+      - grafana/dashboards/http-dns.json

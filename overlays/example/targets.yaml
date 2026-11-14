@@ -1,0 +1,33 @@
+# Probe targets (Prometheus file_sd format). This is the file you edit.
+#
+# Per-target labels:
+#   module    (required) probe type; a module name from prober/blackbox.yml
+#             icmp | http_2xx | dns_udp | <your own, e.g. icmp_vxlan220>
+#   name      (optional) friendly name shown in Grafana; defaults to the target
+#   interval  (optional) probe frequency, e.g. 1s, 5s, 30s; default 30s
+#   timeout   (optional) per-probe timeout; default min(interval, 5s)
+#
+# Any other label (e.g. link: mpls) is kept and can be used in dashboards.
+
+- targets: ["1.1.1.1"]
+  labels:
+    module: icmp
+    name: cloudflare
+    interval: 30s
+
+# --- Placeholders: uncomment to enable -------------------------------------
+
+# HTTP/HTTPS check; the target is the full URL.
+# - targets: ["https://www.cloudflare.com"]
+#   labels:
+#     module: http_2xx
+#     name: cloudflare-https
+#     interval: 30s
+
+# DNS check; the target is the DNS *server*. The name that is looked up is
+# set in the dns_udp module in prober/blackbox.yml.
+# - targets: ["1.1.1.1"]
+#   labels:
+#     module: dns_udp
+#     name: cloudflare-dns
+#     interval: 30s

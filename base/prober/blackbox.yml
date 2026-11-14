@@ -1,0 +1,42 @@
+# blackbox_exporter probe modules. Targets pick one with their `module` label.
+# The effective probe timeout comes from the target's interval/timeout (passed
+# by vmagent on each scrape), capped by the `timeout` set here.
+modules:
+  icmp:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: ip4
+      ip_protocol_fallback: false
+
+  # Example: pin a probe to a specific uplink/tunnel by source address. The
+  # prober runs in the host network namespace, so any address on the router
+  # works. Copy, rename, and reference it from a target as `module: icmp_wan2`.
+  # icmp_wan2:
+  #   prober: icmp
+  #   timeout: 5s
+  #   icmp:
+  #     preferred_ip_protocol: ip4
+  #     ip_protocol_fallback: false
+  #     source_ip_address: 192.0.2.10
+
+  # Placeholder HTTP/HTTPS check: any 2xx, follows redirects, records TLS
+  # certificate expiry for https targets.
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      follow_redirects: true
+      valid_status_codes: []   # empty = 2xx
+
+  # Placeholder DNS check: asks the target server for this record over UDP.
+  dns_udp:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: udp
+      preferred_ip_protocol: ip4
+      query_name: example.com
+      query_type: A
+      valid_rcodes: [NOERROR]

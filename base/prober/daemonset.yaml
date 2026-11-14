@@ -1,0 +1,100 @@
+# One prober per node: blackbox_exporter runs the probes, vmagent schedules
+# them (per-target interval) and ships results to VictoriaMetrics.
+#
+# hostNetwork is deliberate: probes leave from the router's own network
+# namespace, so they follow its routing table and can be pinned to a specific
+# uplink/tunnel with source_ip_address. Both containers listen on loopback
+# only, so nothing new is exposed on the node.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: prober
+  labels:
+    app.kubernetes.io/name: prober
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prober
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prober
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: blackbox-exporter
+          image: prom/blackbox-exporter:v0.29.1
+          args:
+            - --config.file=/etc/perfmon/blackbox/blackbox.yml
+            - --web.listen-address=127.0.0.1:9115
+            # probe timeout = scrape timeout minus this offset
+            - --timeout-offset=0.1
+          securityContext:
+            # raw ICMP sockets need root + NET_RAW; everything else is dropped
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [NET_RAW]
+          readinessProbe:
+            httpGet: {host: 127.0.0.1, port: 9115, path: /-/healthy}
+          livenessProbe:
+            httpGet: {host: 127.0.0.1, port: 9115, path: /-/healthy}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          volumeMounts:
+            - {name: blackbox, mountPath: /etc/perfmon/blackbox}
+        - name: vmagent
+          image: victoriametrics/vmagent:v1.156.0
+          args:
+            - -promscrape.config=/etc/perfmon/scrape/scrape.yml
+            - -promscrape.config.strictParse=true
+            - -remoteWrite.url=http://victoriametrics.perfmon.svc:8428/api/v1/write
+            - -remoteWrite.tmpDataPath=/buffer
+            - -remoteWrite.maxDiskUsagePerURL=1GiB
+            - -remoteWrite.label=probe_node=$(NODE_NAME)
+            - -httpListenAddr=127.0.0.1:8429
+            - -loggerLevel=WARN
+          env:
+            - name: NODE_NAME
+              valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+          securityContext:
+            runAsUser: 65534
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            httpGet: {host: 127.0.0.1, port: 8429, path: /health}
+          livenessProbe:
+            httpGet: {host: 127.0.0.1, port: 8429, path: /health}
+          resources:
+            requests: {cpu: 20m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: scrape, mountPath: /etc/perfmon/scrape}
+            - {name: targets, mountPath: /etc/perfmon/targets}
+            - {name: buffer, mountPath: /buffer}
+      securityContext:
+        fsGroup: 65534
+      volumes:
+        - name: blackbox
+          configMap: {name: perfmon-blackbox}
+        - name: scrape
+          configMap: {name: perfmon-scrape}
+        - name: targets
+          configMap: {name: perfmon-targets}
+        # buffers samples on disk while VictoriaMetrics is unreachable
+        - name: buffer
+          emptyDir: {sizeLimit: 1Gi}

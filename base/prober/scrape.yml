@@ -1,0 +1,52 @@
+# vmagent scrape config. You should not normally need to edit this; add or
+# change targets in targets.yaml instead.
+global:
+  scrape_interval: 30s
+  scrape_timeout: 5s
+
+scrape_configs:
+  - job_name: probe
+    metrics_path: /probe
+    file_sd_configs:
+      - files: [/etc/perfmon/targets/*.yaml]
+    relabel_configs:
+      # target + module become blackbox_exporter query parameters
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__address__]
+        target_label: target
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [module]
+        target_label: __param_module
+      # name defaults to the target itself
+      - source_labels: [name, __address__]
+        regex: ;(.+)
+        target_label: name
+      # per-target interval / timeout
+      - source_labels: [interval]
+        regex: (.+)
+        target_label: __scrape_interval__
+      - source_labels: [interval]
+        regex: (.+)
+        target_label: __scrape_timeout__
+      - source_labels: [interval]
+        regex: (\d+m|\d+h|[6-9]s|\d\d+s)
+        replacement: 5s
+        target_label: __scrape_timeout__
+      - source_labels: [timeout]
+        regex: (.+)
+        target_label: __scrape_timeout__
+      - action: labeldrop
+        regex: interval|timeout
+      # the scrape itself goes to the blackbox_exporter sidecar
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+
+  # prober self-metrics
+  - job_name: blackbox
+    static_configs:
+      - targets: ["127.0.0.1:9115"]
+  - job_name: vmagent
+    static_configs:
+      - targets: ["127.0.0.1:8429"]
