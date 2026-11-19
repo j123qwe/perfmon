@@ -1,9 +1,10 @@
 # One prober per node: blackbox_exporter runs the probes, vmagent schedules
-# them (per-target interval) and ships results to VictoriaMetrics.
+# them (per-target interval) and ships results to VictoriaMetrics. The ISP
+# exporter looks up this node's public egress connection every five minutes.
 #
 # hostNetwork is deliberate: probes leave from the router's own network
 # namespace, so they follow its routing table and can be pinned to a specific
-# uplink/tunnel with source_ip_address. Both containers listen on loopback
+# uplink/tunnel with source_ip_address. All containers listen on loopback
 # only, so nothing new is exposed on the node.
 apiVersion: apps/v1
 kind: DaemonSet
@@ -55,6 +56,24 @@ spec:
             limits: {memory: 128Mi}
           volumeMounts:
             - {name: blackbox, mountPath: /etc/perfmon/blackbox}
+        - name: isp-exporter
+          image: python:3.13.18-alpine
+          command: ["python3", "-B", "/etc/perfmon/isp/isp-exporter.py"]
+          securityContext:
+            runAsUser: 65534
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          readinessProbe:
+            httpGet: {host: 127.0.0.1, port: 9116, path: /health}
+          livenessProbe:
+            httpGet: {host: 127.0.0.1, port: 9116, path: /health}
+          resources:
+            requests: {cpu: 5m, memory: 24Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: isp, mountPath: /etc/perfmon/isp, readOnly: true}
         - name: vmagent
           image: victoriametrics/vmagent:v1.156.0
           args:
@@ -95,6 +114,8 @@ spec:
           configMap: {name: perfmon-scrape}
         - name: targets
           configMap: {name: perfmon-targets}
+        - name: isp
+          configMap: {name: perfmon-isp}
         # buffers samples on disk while VictoriaMetrics is unreachable
         - name: buffer
           emptyDir: {sizeLimit: 1Gi}

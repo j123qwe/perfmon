@@ -44,6 +44,9 @@ scrape_configs:
         replacement: 127.0.0.1:9115
 
   # prober self-metrics
+  - job_name: isp
+    static_configs:
+      - targets: ["127.0.0.1:9116"]
   - job_name: blackbox
     static_configs:
       - targets: ["127.0.0.1:9115"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the provisioned Grafana dashboards.
+"""Generate the provisioned Grafana dashboard with native tabs.
 
     python3 hack/gen-dashboards.py
 
@@ -89,26 +89,67 @@ def stat(title, pos, targets, unit, desc=None, th=None, mappings=None,
 
 
 def variable(name, label, query):
-    return {"name": name, "label": label, "type": "query", "datasource": DS,
-            "query": {"query": query, "refId": "v"}, "definition": query,
-            "refresh": 2, "sort": 1, "multi": True, "includeAll": True,
-            "allValue": ".*", "current": {"text": "All", "value": "$__all"}}
+    return {"kind": "QueryVariable", "spec": {
+        "name": name, "label": label, "query": data_query({"query": query,
+                                                         "refId": "v"}),
+        "definition": query, "refresh": "onTimeRangeChanged",
+        "sort": "alphabeticalAsc", "multi": True, "includeAll": True,
+        "allValue": ".*", "current": {"text": "All", "value": "$__all"},
+        "hide": "dontHide", "skipUrlSync": False, "regex": "",
+        "options": [], "allowCustomValue": False}}
 
 
-def dashboard(uid, title, desc, variables, panels, refresh="10s"):
-    return {
-        "uid": uid, "title": title, "description": desc, "tags": ["perfmon"],
-        "schemaVersion": 39, "version": 1, "editable": False,
-        "graphTooltip": 1, "timezone": "browser", "refresh": refresh,
-        "time": {"from": "now-1h", "to": "now"},
-        "timepicker": {"refresh_intervals":
-                       ["1s", "5s", "10s", "30s", "1m", "5m"]},
-        "templating": {"list": variables},
-        "links": [{"type": "dashboards", "tags": ["perfmon"], "asDropdown": False,
-                   "title": "perfmon", "includeVars": False,
-                   "keepTime": True}],
-        "panels": panels,
-    }
+def data_query(query):
+    return {"kind": "DataQuery", "group": DS["type"], "version": "v0",
+            "datasource": {"name": DS["uid"]},
+            "spec": {k: v for k, v in query.items() if k != "datasource"}}
+
+
+def element(p):
+    spec = {k: p[k] for k in ("id", "title", "description", "transparent")
+            if k in p}
+    spec.update({
+        "links": [],
+        "data": {"kind": "QueryGroup", "spec": {
+            "queries": [{"kind": "PanelQuery", "spec": {
+                "refId": q["refId"], "hidden": False, "query": data_query(q)}}
+                for q in p["targets"]],
+            "transformations": [
+                {"kind": t["id"], "spec": t}
+                for t in p.get("transformations", [])],
+            "queryOptions": {}}},
+        "vizConfig": {"kind": "VizConfig", "group": p["type"],
+                      "version": "13.2.6",
+                      "spec": {"options": p["options"],
+                               "fieldConfig": p["fieldConfig"]}},
+    })
+    return {"kind": "Panel", "spec": spec}
+
+
+def layout(panels):
+    rows = []
+    items = []
+    offset = 0
+    for p in panels:
+        if p["type"] == "row":
+            rows.append({"kind": "RowsLayoutRow", "spec": {
+                "title": p["title"], "collapse": p["collapsed"],
+                "layout": {"kind": "GridLayout", "spec": {"items": []}}}})
+            items = rows[-1]["spec"]["layout"]["spec"]["items"]
+            offset = p["gridPos"]["y"] + 1
+            continue
+        if not rows:
+            rows.append({"kind": "RowsLayoutRow", "spec": {
+                "hideHeader": True,
+                "layout": {"kind": "GridLayout", "spec": {"items": items}}}})
+        pos = p["gridPos"]
+        items.append({"kind": "GridLayoutItem", "spec": {
+            "x": pos["x"], "y": pos["y"] - offset,
+            "width": pos["w"], "height": pos["h"],
+            "element": {"kind": "ElementReference", "name": f'panel-{p["id"]}'}}})
+    if len(rows) == 1 and rows[0]["spec"].get("hideHeader"):
+        return rows[0]["spec"]["layout"]
+    return {"kind": "RowsLayout", "spec": {"rows": rows}}
 
 
 UPDOWN = [{"type": "value", "options": {
@@ -212,15 +253,7 @@ def backhaul():
                             {"id": "decimals", "value": 2}]},
         ], options={"showHeader": True, "cellHeight": "sm"}),
     ]
-    return dashboard(
-        "perfmon-backhaul", "Backhaul performance",
-        "ICMP latency, loss and jitter for the backhaul probe targets.",
-        [variable("node", "Probe node",
-                  "label_values(probe_success, probe_node)"),
-         variable("target", "Target",
-                  'label_values(probe_success{module=~"icmp.*",'
-                  'probe_node=~"$node"}, name)')],
-        p)
+    return p
 
 
 # --------------------------------------------------------------------------
@@ -279,16 +312,103 @@ def http_dns():
            "percent", "Share of failed lookups per graph interval.",
            draw="bars"),
     ]
-    return dashboard(
-        "perfmon-http-dns", "HTTP and DNS checks",
-        "Placeholder dashboard for HTTP/HTTPS and DNS probe targets.",
-        [variable("node", "Probe node",
-                  "label_values(probe_success, probe_node)")],
-        p, refresh="30s")
+    return p
+
+
+def isp():
+    sel = 'probe_node=~"$node"'
+    fresh = (f'and on(probe_node) (perfmon_isp_lookup_success{{{sel}}} == 1) '
+             f'and on(probe_node) (up{{job="isp",{sel}}} == 1) '
+             f'and on(probe_node) (time() - '
+             f'perfmon_isp_last_success_timestamp_seconds{{{sel}}} < 660)')
+    p = [
+        panel("text", "", (0, 0, 24, 4), [], transparent=True, options={
+            "mode": "markdown",
+            "content": "### Internet connection\n"
+                       "Public egress information for each selected **probe node**, "
+                       "not your browser. Looked up every five minutes via "
+                       "[ipwho.is](https://ipwhois.io/). Location is approximate. "
+                       "VPNs, NAT and proxies may identify the exit provider instead "
+                       "of the physical ISP. Only the default egress address family "
+                       "is shown; this does not identify every uplink. "
+                       "The Target filter applies only to Backhaul.\n\n"
+                       "A failed lookup clears the details. Check lookup status, "
+                       "exporter reachability and age below."}),
+        stat("Lookup status", (0, 4, 8, 4),
+             [target(f"perfmon_isp_lookup_success{{{sel}}}",
+                     "{{probe_node}}", instant=True)], None,
+             mappings=[{"type": "value", "options": {
+                 "0": {"text": "FAILED / PENDING", "color": "red"},
+                 "1": {"text": "OK", "color": "green"}}}],
+             th=thresholds((None, "red"), (1, "green"))),
+        stat("Exporter reachable", (8, 4, 8, 4),
+             [target(f'up{{job="isp",{sel}}}', "{{probe_node}}", instant=True)],
+             None, mappings=UPDOWN,
+             th=thresholds((None, "red"), (1, "green"))),
+        stat("Last successful lookup age", (16, 4, 8, 4),
+             [target(f"time() - (perfmon_isp_last_success_timestamp_seconds"
+                     f"{{{sel}}} > 0)", "{{probe_node}}", instant=True)],
+             "s", desc="No value until the first successful lookup.",
+             th=thresholds((None, "green"), (660, "red")), decimals=0),
+    ]
+    for title, x in (("Public IP", 0), ("ISP", 8), ("ASN", 16)):
+        p.append(panel(
+            "stat", title, (x, 8, 8, 4),
+            [target(f'perfmon_isp_info{{field="{title}",{sel}}} {fresh}',
+                    "{{value}} ({{probe_node}})", instant=True)],
+            options={"reduceOptions": {"calcs": ["lastNotNull"],
+                                       "fields": "", "values": False},
+                     "textMode": "name", "colorMode": "none",
+                     "graphMode": "none"}))
+    p.append(panel(
+        "table", "Connection details", (0, 12, 24, 15),
+        [target(f"perfmon_isp_info{{{sel}}} {fresh}", instant=True, fmt="table")],
+        transformations=[{"id": "organize", "options": {
+            "includeByName": {"probe_node": True, "field": True, "value": True},
+            "indexByName": {"probe_node": 0, "field": 1, "value": 2},
+            "renameByName": {"probe_node": "Probe node",
+                             "field": "Detail", "value": "Value"}}}],
+        options={"showHeader": True, "cellHeight": "sm",
+                 "sortBy": [{"displayName": "Probe node", "desc": False},
+                            {"displayName": "Detail", "desc": False}]}))
+    return p
+
+
+def dashboard():
+    tabs = [("Backhaul", backhaul()), ("HTTP / DNS", http_dns()), ("ISP", isp())]
+    return {
+        "apiVersion": "dashboard.grafana.app/v2beta1", "kind": "Dashboard",
+        # Keep the existing backhaul URL and home dashboard filename.
+        "metadata": {"name": "perfmon-backhaul"},
+        "spec": {
+            "title": "Network performance",
+            "description": "Backhaul performance, HTTP / DNS checks and node ISP information.",
+            "tags": ["perfmon"], "editable": False, "preload": False,
+            "cursorSync": "Crosshair", "annotations": [], "links": [],
+            "timeSettings": {
+                "timezone": "browser", "from": "now-1h", "to": "now",
+                "autoRefresh": "10s", "autoRefreshIntervals":
+                    ["1s", "5s", "10s", "30s", "1m", "5m"],
+                "hideTimepicker": False, "fiscalYearStartMonth": 0},
+            "variables": [
+                variable("node", "Probe node",
+                         'label_values({__name__=~"probe_success|'
+                         'perfmon_isp_lookup_success"}, probe_node)'),
+                variable("target", "ICMP target",
+                         'label_values(probe_success{module=~"icmp.*",'
+                         'probe_node=~"$node"}, name)')],
+            "elements": {f'panel-{p["id"]}': element(p)
+                         for _, panels in tabs for p in panels if p["type"] != "row"},
+            "layout": {"kind": "TabsLayout", "spec": {"tabs": [
+                {"kind": "TabsLayoutTab", "spec": {
+                    "title": title, "layout": layout(panels)}}
+                for title, panels in tabs]}},
+        },
+    }
 
 
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
-    for name, fn in (("backhaul", backhaul), ("http-dns", http_dns)):
-        (OUT / f"{name}.json").write_text(json.dumps(fn(), indent=2) + "\n")
-        print("wrote", OUT / f"{name}.json")
+    path = OUT / "backhaul.json"
+    path.write_text(json.dumps(dashboard(), indent=2) + "\n")
+    print("wrote", path)

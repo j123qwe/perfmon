@@ -29,6 +29,9 @@ configMapGenerator:
   - name: perfmon-scrape
     files:
       - scrape.yml=prober/scrape.yml
+  - name: perfmon-isp
+    files:
+      - prober/isp-exporter.py
   - name: grafana-provisioning
     files:
       - datasources.yaml=grafana/datasources.yaml
@@ -36,4 +39,3 @@ configMapGenerator:
   - name: grafana-dashboards
     files:
       - grafana/dashboards/backhaul.json
-      - grafana/dashboards/http-dns.json
