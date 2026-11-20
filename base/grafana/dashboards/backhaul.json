@@ -535,8 +535,8 @@
         "kind": "Panel",
         "spec": {
           "id": 6,
-          "title": "Round-trip time (avg)",
-          "description": "Mean RTT of answered probes per graph interval. Zoom in to see individual probes.",
+          "title": "ISP over time",
+          "description": "Last observed default-egress ISP at each point in the selected time range, with a separate lane per node and ISP. The lookup interval is configurable (five minutes by default); ISP metrics are scraped every 30 seconds, not per probe. Failed, unreachable or stale lookups leave gaps. Compare switches with the shared crosshair on the graphs below.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -555,8 +555,8 @@
                         "name": "victoriametrics"
                       },
                       "spec": {
-                        "expr": "sum_over_time(probe_icmp_duration_seconds{phase=\"rtt\",module=~\"icmp.*\",probe_node=~\"$node\",name=~\"$target\"}[$__interval]) / ignoring(phase) (sum_over_time(probe_success{module=~\"icmp.*\",probe_node=~\"$node\",name=~\"$target\"}[$__interval]) > 0)",
-                        "legendFormat": "{{name}}",
+                        "expr": "perfmon_isp_info{field=\"ISP\",probe_node=~\"$node\"} and (timestamp(perfmon_isp_info{field=\"ISP\",probe_node=~\"$node\"}) == on(probe_node) group_left() timestamp(perfmon_isp_lookup_success{probe_node=~\"$node\"})) and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < on(probe_node) (2 * (perfmon_isp_lookup_interval_seconds{probe_node=~\"$node\"} or on(probe_node) (0 * perfmon_isp_lookup_success{probe_node=~\"$node\"} + 300)) + 60))",
+                        "legendFormat": "{{probe_node}} / {{value}}",
                         "refId": "A",
                         "editorMode": "code"
                       }
@@ -570,35 +570,30 @@
           },
           "vizConfig": {
             "kind": "VizConfig",
-            "group": "timeseries",
+            "group": "state-timeline",
             "version": "13.2.6",
             "spec": {
               "options": {
+                "showValue": "never",
+                "mergeValues": true,
+                "rowHeight": 0.8,
                 "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max",
-                    "lastNotNull"
-                  ]
+                  "showLegend": false
                 },
                 "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
+                  "mode": "single"
                 }
               },
               "fieldConfig": {
                 "defaults": {
-                  "unit": "s",
-                  "custom": {
-                    "drawStyle": "line",
-                    "lineWidth": 1,
-                    "fillOpacity": 8,
-                    "showPoints": "auto",
-                    "spanNulls": 120000
+                  "color": {
+                    "mode": "palette-classic"
                   },
-                  "min": 0
+                  "custom": {
+                    "fillOpacity": 80,
+                    "lineWidth": 0,
+                    "spanNulls": false
+                  }
                 },
                 "overrides": []
               }
@@ -685,81 +680,6 @@
         "kind": "Panel",
         "spec": {
           "id": 8,
-          "title": "Jitter",
-          "description": "Standard deviation of RTT over a rolling 2 minute window.",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "victoriametrics"
-                      },
-                      "spec": {
-                        "expr": "stddev_over_time((probe_icmp_duration_seconds{phase=\"rtt\",module=~\"icmp.*\",probe_node=~\"$node\",name=~\"$target\"} > 0)[2m:1s])",
-                        "legendFormat": "{{name}}",
-                        "refId": "A",
-                        "editorMode": "code"
-                      }
-                    }
-                  }
-                }
-              ],
-              "transformations": [],
-              "queryOptions": {}
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "timeseries",
-            "version": "13.2.6",
-            "spec": {
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean",
-                    "max",
-                    "lastNotNull"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi",
-                  "sort": "desc"
-                }
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "s",
-                  "custom": {
-                    "drawStyle": "line",
-                    "lineWidth": 1,
-                    "fillOpacity": 8,
-                    "showPoints": "auto",
-                    "spanNulls": 120000
-                  },
-                  "min": 0
-                },
-                "overrides": []
-              }
-            }
-          }
-        }
-      },
-      "panel-9": {
-        "kind": "Panel",
-        "spec": {
-          "id": 9,
           "title": "Packet loss",
           "description": "Share of probes lost per graph interval.",
           "links": [],
@@ -831,10 +751,10 @@
           }
         }
       },
-      "panel-10": {
+      "panel-9": {
         "kind": "Panel",
         "spec": {
-          "id": 10,
+          "id": 9,
           "title": "Reachability",
           "description": "Red where at least one probe in the interval was lost.",
           "links": [],
@@ -929,10 +849,160 @@
           }
         }
       },
+      "panel-10": {
+        "kind": "Panel",
+        "spec": {
+          "id": 10,
+          "title": "Round-trip time (avg)",
+          "description": "Mean RTT of answered probes per graph interval. Zoom in to see individual probes.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "victoriametrics"
+                      },
+                      "spec": {
+                        "expr": "sum_over_time(probe_icmp_duration_seconds{phase=\"rtt\",module=~\"icmp.*\",probe_node=~\"$node\",name=~\"$target\"}[$__interval]) / ignoring(phase) (sum_over_time(probe_success{module=~\"icmp.*\",probe_node=~\"$node\",name=~\"$target\"}[$__interval]) > 0)",
+                        "legendFormat": "{{name}}",
+                        "refId": "A",
+                        "editorMode": "code"
+                      }
+                    }
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.6",
+            "spec": {
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max",
+                    "lastNotNull"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "auto",
+                    "spanNulls": 120000
+                  },
+                  "min": 0
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
       "panel-11": {
         "kind": "Panel",
         "spec": {
           "id": 11,
+          "title": "Jitter",
+          "description": "Standard deviation of RTT over a rolling 2 minute window.",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "victoriametrics"
+                      },
+                      "spec": {
+                        "expr": "stddev_over_time((probe_icmp_duration_seconds{phase=\"rtt\",module=~\"icmp.*\",probe_node=~\"$node\",name=~\"$target\"} > 0)[2m:1s])",
+                        "legendFormat": "{{name}}",
+                        "refId": "A",
+                        "editorMode": "code"
+                      }
+                    }
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "timeseries",
+            "version": "13.2.6",
+            "spec": {
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "mean",
+                    "max",
+                    "lastNotNull"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "s",
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "auto",
+                    "spanNulls": 120000
+                  },
+                  "min": 0
+                },
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-12": {
+        "kind": "Panel",
+        "spec": {
+          "id": 12,
           "title": "Summary for selected time range",
           "links": [],
           "data": {
@@ -1179,10 +1249,10 @@
           }
         }
       },
-      "panel-12": {
+      "panel-13": {
         "kind": "Panel",
         "spec": {
-          "id": 12,
+          "id": 13,
           "title": "",
           "transparent": true,
           "links": [],
@@ -1211,10 +1281,10 @@
           }
         }
       },
-      "panel-14": {
+      "panel-15": {
         "kind": "Panel",
         "spec": {
-          "id": 14,
+          "id": 15,
           "title": "HTTP status",
           "links": [],
           "data": {
@@ -1307,10 +1377,10 @@
           }
         }
       },
-      "panel-15": {
+      "panel-16": {
         "kind": "Panel",
         "spec": {
-          "id": 15,
+          "id": 16,
           "title": "Response code",
           "links": [],
           "data": {
@@ -1393,10 +1463,10 @@
           }
         }
       },
-      "panel-16": {
+      "panel-17": {
         "kind": "Panel",
         "spec": {
-          "id": 16,
+          "id": 17,
           "title": "TLS certificate expires in",
           "links": [],
           "data": {
@@ -1481,10 +1551,10 @@
           }
         }
       },
-      "panel-17": {
+      "panel-18": {
         "kind": "Panel",
         "spec": {
-          "id": 17,
+          "id": 18,
           "title": "Availability",
           "description": "Share of successful checks over the selected range.",
           "links": [],
@@ -1562,10 +1632,10 @@
           }
         }
       },
-      "panel-18": {
+      "panel-19": {
         "kind": "Panel",
         "spec": {
-          "id": 18,
+          "id": 19,
           "title": "HTTP response time",
           "description": "Total time for the check, including DNS, connect and TLS.",
           "links": [],
@@ -1637,10 +1707,10 @@
           }
         }
       },
-      "panel-19": {
+      "panel-20": {
         "kind": "Panel",
         "spec": {
-          "id": 19,
+          "id": 20,
           "title": "HTTP time by phase",
           "description": "Where the time goes: resolve, connect, tls, processing, transfer.",
           "links": [],
@@ -1715,10 +1785,10 @@
           }
         }
       },
-      "panel-21": {
+      "panel-22": {
         "kind": "Panel",
         "spec": {
-          "id": 21,
+          "id": 22,
           "title": "DNS status",
           "links": [],
           "data": {
@@ -1811,10 +1881,10 @@
           }
         }
       },
-      "panel-22": {
+      "panel-23": {
         "kind": "Panel",
         "spec": {
-          "id": 22,
+          "id": 23,
           "title": "Availability",
           "description": "Share of successful lookups over the selected range.",
           "links": [],
@@ -1892,10 +1962,10 @@
           }
         }
       },
-      "panel-23": {
+      "panel-24": {
         "kind": "Panel",
         "spec": {
-          "id": 23,
+          "id": 24,
           "title": "DNS lookup time",
           "description": "Time for the configured query to be answered.",
           "links": [],
@@ -1967,10 +2037,10 @@
           }
         }
       },
-      "panel-24": {
+      "panel-25": {
         "kind": "Panel",
         "spec": {
-          "id": 24,
+          "id": 25,
           "title": "DNS failures",
           "description": "Share of failed lookups per graph interval.",
           "links": [],
@@ -2042,10 +2112,10 @@
           }
         }
       },
-      "panel-25": {
+      "panel-26": {
         "kind": "Panel",
         "spec": {
-          "id": 25,
+          "id": 26,
           "title": "",
           "transparent": true,
           "links": [],
@@ -2064,7 +2134,7 @@
             "spec": {
               "options": {
                 "mode": "markdown",
-                "content": "### Internet connection\nPublic egress information for each selected **probe node**, not your browser. Looked up every five minutes via [ipwho.is](https://ipwhois.io/). Location is approximate. VPNs, NAT and proxies may identify the exit provider instead of the physical ISP. Only the default egress address family is shown; this does not identify every uplink. The Target filter applies only to Backhaul.\n\nA failed lookup clears the details. Check lookup status, exporter reachability and age below."
+                "content": "### Internet connection\nPublic egress information for each selected **probe node**, not your browser. Looked up at the configured interval (five minutes by default) via [ip0.me](https://ip0.me/). ISP uses its AS organization field. Location is approximate. VPNs, NAT and proxies may identify the exit provider instead of the physical ISP. Only the default egress address family is shown; this does not identify every uplink. The Target filter applies only to Backhaul.\n\nA failed lookup clears the details. Check lookup status, exporter reachability and age below."
               },
               "fieldConfig": {
                 "defaults": {},
@@ -2074,10 +2144,10 @@
           }
         }
       },
-      "panel-26": {
+      "panel-27": {
         "kind": "Panel",
         "spec": {
-          "id": 26,
+          "id": 27,
           "title": "Lookup status",
           "links": [],
           "data": {
@@ -2170,10 +2240,10 @@
           }
         }
       },
-      "panel-27": {
+      "panel-28": {
         "kind": "Panel",
         "spec": {
-          "id": 27,
+          "id": 28,
           "title": "Exporter reachable",
           "links": [],
           "data": {
@@ -2266,12 +2336,12 @@
           }
         }
       },
-      "panel-28": {
+      "panel-29": {
         "kind": "Panel",
         "spec": {
-          "id": 28,
+          "id": 29,
           "title": "Last successful lookup age",
-          "description": "No value until the first successful lookup.",
+          "description": "No value until the first successful lookup. Details expire after two configured lookup intervals plus 60 seconds.",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -2318,7 +2388,7 @@
                   "fields": "",
                   "values": false
                 },
-                "colorMode": "background",
+                "colorMode": "value",
                 "graphMode": "none",
                 "textMode": "value_and_name",
                 "orientation": "auto"
@@ -2330,12 +2400,8 @@
                     "mode": "absolute",
                     "steps": [
                       {
-                        "color": "green",
+                        "color": "text",
                         "value": null
-                      },
-                      {
-                        "color": "red",
-                        "value": 660
                       }
                     ]
                   },
@@ -2351,10 +2417,10 @@
           }
         }
       },
-      "panel-29": {
+      "panel-30": {
         "kind": "Panel",
         "spec": {
-          "id": 29,
+          "id": 30,
           "title": "Public IP",
           "links": [],
           "data": {
@@ -2374,70 +2440,7 @@
                         "name": "victoriametrics"
                       },
                       "spec": {
-                        "expr": "perfmon_isp_info{field=\"Public IP\",probe_node=~\"$node\"} and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < 660)",
-                        "legendFormat": "{{value}} ({{probe_node}})",
-                        "refId": "A",
-                        "editorMode": "code",
-                        "instant": true,
-                        "range": false
-                      }
-                    }
-                  }
-                }
-              ],
-              "transformations": [],
-              "queryOptions": {}
-            }
-          },
-          "vizConfig": {
-            "kind": "VizConfig",
-            "group": "stat",
-            "version": "13.2.6",
-            "spec": {
-              "options": {
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                },
-                "textMode": "name",
-                "colorMode": "none",
-                "graphMode": "none"
-              },
-              "fieldConfig": {
-                "defaults": {},
-                "overrides": []
-              }
-            }
-          }
-        }
-      },
-      "panel-30": {
-        "kind": "Panel",
-        "spec": {
-          "id": 30,
-          "title": "ISP",
-          "links": [],
-          "data": {
-            "kind": "QueryGroup",
-            "spec": {
-              "queries": [
-                {
-                  "kind": "PanelQuery",
-                  "spec": {
-                    "refId": "A",
-                    "hidden": false,
-                    "query": {
-                      "kind": "DataQuery",
-                      "group": "prometheus",
-                      "version": "v0",
-                      "datasource": {
-                        "name": "victoriametrics"
-                      },
-                      "spec": {
-                        "expr": "perfmon_isp_info{field=\"ISP\",probe_node=~\"$node\"} and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < 660)",
+                        "expr": "perfmon_isp_info{field=\"Public IP\",probe_node=~\"$node\"} and (timestamp(perfmon_isp_info{field=\"Public IP\",probe_node=~\"$node\"}) == on(probe_node) group_left() timestamp(perfmon_isp_lookup_success{probe_node=~\"$node\"})) and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < on(probe_node) (2 * (perfmon_isp_lookup_interval_seconds{probe_node=~\"$node\"} or on(probe_node) (0 * perfmon_isp_lookup_success{probe_node=~\"$node\"} + 300)) + 60))",
                         "legendFormat": "{{value}} ({{probe_node}})",
                         "refId": "A",
                         "editorMode": "code",
@@ -2481,7 +2484,7 @@
         "kind": "Panel",
         "spec": {
           "id": 31,
-          "title": "ASN",
+          "title": "ISP",
           "links": [],
           "data": {
             "kind": "QueryGroup",
@@ -2500,7 +2503,7 @@
                         "name": "victoriametrics"
                       },
                       "spec": {
-                        "expr": "perfmon_isp_info{field=\"ASN\",probe_node=~\"$node\"} and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < 660)",
+                        "expr": "perfmon_isp_info{field=\"ISP\",probe_node=~\"$node\"} and (timestamp(perfmon_isp_info{field=\"ISP\",probe_node=~\"$node\"}) == on(probe_node) group_left() timestamp(perfmon_isp_lookup_success{probe_node=~\"$node\"})) and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < on(probe_node) (2 * (perfmon_isp_lookup_interval_seconds{probe_node=~\"$node\"} or on(probe_node) (0 * perfmon_isp_lookup_success{probe_node=~\"$node\"} + 300)) + 60))",
                         "legendFormat": "{{value}} ({{probe_node}})",
                         "refId": "A",
                         "editorMode": "code",
@@ -2544,6 +2547,69 @@
         "kind": "Panel",
         "spec": {
           "id": 32,
+          "title": "ASN",
+          "links": [],
+          "data": {
+            "kind": "QueryGroup",
+            "spec": {
+              "queries": [
+                {
+                  "kind": "PanelQuery",
+                  "spec": {
+                    "refId": "A",
+                    "hidden": false,
+                    "query": {
+                      "kind": "DataQuery",
+                      "group": "prometheus",
+                      "version": "v0",
+                      "datasource": {
+                        "name": "victoriametrics"
+                      },
+                      "spec": {
+                        "expr": "perfmon_isp_info{field=\"ASN\",probe_node=~\"$node\"} and (timestamp(perfmon_isp_info{field=\"ASN\",probe_node=~\"$node\"}) == on(probe_node) group_left() timestamp(perfmon_isp_lookup_success{probe_node=~\"$node\"})) and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < on(probe_node) (2 * (perfmon_isp_lookup_interval_seconds{probe_node=~\"$node\"} or on(probe_node) (0 * perfmon_isp_lookup_success{probe_node=~\"$node\"} + 300)) + 60))",
+                        "legendFormat": "{{value}} ({{probe_node}})",
+                        "refId": "A",
+                        "editorMode": "code",
+                        "instant": true,
+                        "range": false
+                      }
+                    }
+                  }
+                }
+              ],
+              "transformations": [],
+              "queryOptions": {}
+            }
+          },
+          "vizConfig": {
+            "kind": "VizConfig",
+            "group": "stat",
+            "version": "13.2.6",
+            "spec": {
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "textMode": "name",
+                "colorMode": "none",
+                "graphMode": "none"
+              },
+              "fieldConfig": {
+                "defaults": {},
+                "overrides": []
+              }
+            }
+          }
+        }
+      },
+      "panel-33": {
+        "kind": "Panel",
+        "spec": {
+          "id": 33,
           "title": "Connection details",
           "links": [],
           "data": {
@@ -2563,7 +2629,7 @@
                         "name": "victoriametrics"
                       },
                       "spec": {
-                        "expr": "perfmon_isp_info{probe_node=~\"$node\"} and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < 660)",
+                        "expr": "perfmon_isp_info{probe_node=~\"$node\"} and (timestamp(perfmon_isp_info{probe_node=~\"$node\"}) == on(probe_node) group_left() timestamp(perfmon_isp_lookup_success{probe_node=~\"$node\"})) and on(probe_node) (perfmon_isp_lookup_success{probe_node=~\"$node\"} == 1) and on(probe_node) (up{job=\"isp\",probe_node=~\"$node\"} == 1) and on(probe_node) (time() - perfmon_isp_last_success_timestamp_seconds{probe_node=~\"$node\"} < on(probe_node) (2 * (perfmon_isp_lookup_interval_seconds{probe_node=~\"$node\"} or on(probe_node) (0 * perfmon_isp_lookup_success{probe_node=~\"$node\"} + 300)) + 60))",
                         "legendFormat": "{{name}}",
                         "refId": "A",
                         "editorMode": "code",
@@ -2714,7 +2780,7 @@
                         "x": 0,
                         "y": 4,
                         "width": 24,
-                        "height": 9,
+                        "height": 6,
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-6"
@@ -2725,7 +2791,7 @@
                       "kind": "GridLayoutItem",
                       "spec": {
                         "x": 0,
-                        "y": 13,
+                        "y": 10,
                         "width": 12,
                         "height": 8,
                         "element": {
@@ -2738,7 +2804,7 @@
                       "kind": "GridLayoutItem",
                       "spec": {
                         "x": 12,
-                        "y": 13,
+                        "y": 10,
                         "width": 12,
                         "height": 8,
                         "element": {
@@ -2751,9 +2817,9 @@
                       "kind": "GridLayoutItem",
                       "spec": {
                         "x": 0,
-                        "y": 21,
+                        "y": 18,
                         "width": 24,
-                        "height": 7,
+                        "height": 6,
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-9"
@@ -2764,9 +2830,9 @@
                       "kind": "GridLayoutItem",
                       "spec": {
                         "x": 0,
-                        "y": 28,
+                        "y": 24,
                         "width": 24,
-                        "height": 6,
+                        "height": 9,
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-10"
@@ -2777,12 +2843,25 @@
                       "kind": "GridLayoutItem",
                       "spec": {
                         "x": 0,
-                        "y": 34,
+                        "y": 33,
                         "width": 24,
                         "height": 8,
                         "element": {
                           "kind": "ElementReference",
                           "name": "panel-11"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
+                        "x": 0,
+                        "y": 41,
+                        "width": 24,
+                        "height": 8,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-12"
                         }
                       }
                     }
@@ -2816,7 +2895,7 @@
                                   "height": 3,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-12"
+                                    "name": "panel-13"
                                   }
                                 }
                               }
@@ -2843,7 +2922,7 @@
                                   "height": 4,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-14"
+                                    "name": "panel-15"
                                   }
                                 }
                               },
@@ -2856,19 +2935,6 @@
                                   "height": 4,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-15"
-                                  }
-                                }
-                              },
-                              {
-                                "kind": "GridLayoutItem",
-                                "spec": {
-                                  "x": 12,
-                                  "y": 0,
-                                  "width": 6,
-                                  "height": 4,
-                                  "element": {
-                                    "kind": "ElementReference",
                                     "name": "panel-16"
                                   }
                                 }
@@ -2876,7 +2942,7 @@
                               {
                                 "kind": "GridLayoutItem",
                                 "spec": {
-                                  "x": 18,
+                                  "x": 12,
                                   "y": 0,
                                   "width": 6,
                                   "height": 4,
@@ -2889,13 +2955,26 @@
                               {
                                 "kind": "GridLayoutItem",
                                 "spec": {
+                                  "x": 18,
+                                  "y": 0,
+                                  "width": 6,
+                                  "height": 4,
+                                  "element": {
+                                    "kind": "ElementReference",
+                                    "name": "panel-18"
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "GridLayoutItem",
+                                "spec": {
                                   "x": 0,
                                   "y": 4,
                                   "width": 12,
                                   "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-18"
+                                    "name": "panel-19"
                                   }
                                 }
                               },
@@ -2908,7 +2987,7 @@
                                   "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-19"
+                                    "name": "panel-20"
                                   }
                                 }
                               }
@@ -2935,7 +3014,7 @@
                                   "height": 4,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-21"
+                                    "name": "panel-22"
                                   }
                                 }
                               },
@@ -2948,7 +3027,7 @@
                                   "height": 4,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-22"
+                                    "name": "panel-23"
                                   }
                                 }
                               },
@@ -2961,7 +3040,7 @@
                                   "height": 8,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-23"
+                                    "name": "panel-24"
                                   }
                                 }
                               },
@@ -2974,7 +3053,7 @@
                                   "height": 4,
                                   "element": {
                                     "kind": "ElementReference",
-                                    "name": "panel-24"
+                                    "name": "panel-25"
                                   }
                                 }
                               }
@@ -3005,19 +3084,6 @@
                         "height": 4,
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-25"
-                        }
-                      }
-                    },
-                    {
-                      "kind": "GridLayoutItem",
-                      "spec": {
-                        "x": 0,
-                        "y": 4,
-                        "width": 8,
-                        "height": 4,
-                        "element": {
-                          "kind": "ElementReference",
                           "name": "panel-26"
                         }
                       }
@@ -3025,7 +3091,7 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 8,
+                        "x": 0,
                         "y": 4,
                         "width": 8,
                         "height": 4,
@@ -3038,7 +3104,7 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 16,
+                        "x": 8,
                         "y": 4,
                         "width": 8,
                         "height": 4,
@@ -3051,8 +3117,8 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 0,
-                        "y": 8,
+                        "x": 16,
+                        "y": 4,
                         "width": 8,
                         "height": 4,
                         "element": {
@@ -3064,7 +3130,7 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 8,
+                        "x": 0,
                         "y": 8,
                         "width": 8,
                         "height": 4,
@@ -3077,7 +3143,7 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
-                        "x": 16,
+                        "x": 8,
                         "y": 8,
                         "width": 8,
                         "height": 4,
@@ -3090,13 +3156,26 @@
                     {
                       "kind": "GridLayoutItem",
                       "spec": {
+                        "x": 16,
+                        "y": 8,
+                        "width": 8,
+                        "height": 4,
+                        "element": {
+                          "kind": "ElementReference",
+                          "name": "panel-32"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "GridLayoutItem",
+                      "spec": {
                         "x": 0,
                         "y": 12,
                         "width": 24,
                         "height": 15,
                         "element": {
                           "kind": "ElementReference",
-                          "name": "panel-32"
+                          "name": "panel-33"
                         }
                       }
                     }

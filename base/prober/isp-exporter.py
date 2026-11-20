@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Expose the node's public IP and ISP as Prometheus metrics."""
+import argparse
 import ipaddress
 import json
 import logging
 import math
+import re
 import threading
 import time
 import urllib.error
@@ -12,17 +14,16 @@ from http.client import HTTPException
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
-LOOKUP_URL = "https://ipwho.is/"
+LOOKUP_URL = "https://ip0.me/json"
 INTERVAL = 300
 
 
 def parse_info(data):
-    if not isinstance(data, dict) or data.get("success") is not True:
-        raise ValueError("IP lookup service reported failure")
+    if not isinstance(data, dict):
+        raise ValueError("Invalid IP lookup response")
     address = ipaddress.ip_address(data["ip"])
-    connection = data["connection"]
-    asn = connection["asn"]
-    if isinstance(asn, bool) or not isinstance(asn, int) or asn <= 0:
+    asn = data["asn"]
+    if not isinstance(asn, str) or not re.fullmatch(r"AS[1-9][0-9]*", asn):
         raise ValueError("Invalid ASN")
     latitude, longitude = float(data["latitude"]), float(data["longitude"])
     if not (math.isfinite(latitude) and -90 <= latitude <= 90
@@ -31,15 +32,15 @@ def parse_info(data):
     info = {
         "Public IP": str(address),
         "IP version": f"IPv{address.version}",
-        "ASN": f"AS{asn}",
-        "ISP": connection["isp"],
-        "Organization": connection["org"],
+        "ASN": asn,
+        "ISP": data["as_organization"],
+        "Organization": data["as_organization"],
         "Country": data["country"],
         "Region": data["region"],
         "City": data["city"],
-        "Postal code": data.get("postal", ""),
+        "Postal code": data.get("postal_code", ""),
         "Coordinates": f"{latitude}, {longitude}",
-        "Timezone": data["timezone"]["id"],
+        "Timezone": data["timezone"],
     }
     if any(not isinstance(value, str) for value in info.values()):
         raise ValueError("Invalid text field in IP lookup")
@@ -53,7 +54,8 @@ def label(value):
 
 
 class Lookup:
-    def __init__(self):
+    def __init__(self, interval=INTERVAL):
+        self.interval = interval
         self.lock = threading.Lock()
         self.info = {}
         self.success = 0
@@ -81,18 +83,21 @@ class Lookup:
     def run(self):
         while True:
             self.update()
-            time.sleep(INTERVAL)
+            time.sleep(self.interval)
 
     def metrics(self):
         with self.lock:
             lines = [
+                "# HELP perfmon_isp_lookup_interval_seconds Configured delay between ISP lookups.",
+                "# TYPE perfmon_isp_lookup_interval_seconds gauge",
+                f"perfmon_isp_lookup_interval_seconds {self.interval}",
                 "# HELP perfmon_isp_lookup_success Whether the last ISP lookup succeeded.",
                 "# TYPE perfmon_isp_lookup_success gauge",
                 f"perfmon_isp_lookup_success {self.success}",
                 "# HELP perfmon_isp_last_success_timestamp_seconds Last successful lookup.",
                 "# TYPE perfmon_isp_last_success_timestamp_seconds gauge",
                 f"perfmon_isp_last_success_timestamp_seconds {self.last_success}",
-                "# HELP perfmon_isp_info Public egress information from ipwho.is.",
+                "# HELP perfmon_isp_info Public egress information from ip0.me.",
                 "# TYPE perfmon_isp_info gauge",
             ]
             for field, value in self.info.items():
@@ -102,7 +107,13 @@ class Lookup:
 
 
 def main():
-    lookup = Lookup()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--interval-seconds", type=int, default=INTERVAL,
+                        help="Delay between ISP lookups in seconds (default: 300).")
+    args = parser.parse_args()
+    if args.interval_seconds <= 0:
+        parser.error("--interval-seconds must be a positive integer")
+    lookup = Lookup(interval=args.interval_seconds)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):

@@ -3,8 +3,10 @@
 import importlib.util
 import json
 import pathlib
+import sys
 import unittest
-from io import BytesIO
+from contextlib import redirect_stderr
+from io import BytesIO, StringIO
 from unittest.mock import patch
 from urllib.error import URLError
 
@@ -25,10 +27,11 @@ exporter = load("exporter", "base/prober/isp-exporter.py")
 
 def payload():
     return {
-        "success": True, "ip": "192.0.2.1",
-        "connection": {"asn": 64500, "isp": 'Example "ISP"', "org": "Example"},
+        "ip": "192.0.2.1", "asn": "AS64500",
+        "as_organization": 'Example "ISP"',
         "country": "Example", "region": "Region", "city": "City",
-        "latitude": 10, "longitude": -20, "timezone": {"id": "Etc/UTC"},
+        "postal_code": "12345", "latitude": "10", "longitude": "-20",
+        "timezone": "Etc/UTC",
     }
 
 
@@ -84,14 +87,112 @@ class DashboardTests(unittest.TestCase):
         for row in rows[1:]:
             self.assertEqual(row["spec"]["layout"]["spec"]["items"][0]["spec"]["y"], 0)
 
+    def test_backhaul_history_and_latency_loss_precede_average_without_overlap(self):
+        panels = dashboards.backhaul()
+        average = next(p for p in panels if p["title"] == "Round-trip time (avg)")
+        for title in ("ISP over time", "Round-trip time (max)", "Packet loss",
+                      "Reachability"):
+            panel = next(p for p in panels
+                         if p["title"] == title and p["type"] != "stat")
+            self.assertLessEqual(panel["gridPos"]["y"] + panel["gridPos"]["h"],
+                                 average["gridPos"]["y"])
+        for index, left in enumerate(panels):
+            a = left["gridPos"]
+            for right in panels[index + 1:]:
+                b = right["gridPos"]
+                self.assertFalse(
+                    a["x"] < b["x"] + b["w"] and b["x"] < a["x"] + a["w"]
+                    and a["y"] < b["y"] + b["h"] and b["y"] < a["y"] + a["h"],
+                    f'{left["title"]} overlaps {right["title"]}')
+
+    def test_isp_history_is_range_query_with_current_scrape_and_health_guards(self):
+        history = next(p for p in dashboards.backhaul()
+                       if p["title"] == "ISP over time")
+        query = history["targets"][0]
+        self.assertFalse(query.get("instant", False))
+        self.assertEqual(query["expr"], dashboards.isp_info("ISP"))
+        self.assertIn("{{probe_node}}", query["legendFormat"])
+        self.assertIn("{{value}}", query["legendFormat"])
+        self.assertFalse(history["fieldConfig"]["defaults"]["custom"]["spanNulls"])
+        self.assertIn("timestamp(perfmon_isp_info", query["expr"])
+        self.assertIn("== on(probe_node) group_left() timestamp("
+                      "perfmon_isp_lookup_success", query["expr"])
+        self.assertIn('perfmon_isp_lookup_success{probe_node=~"$node"} == 1',
+                      query["expr"])
+        self.assertIn('up{job="isp",probe_node=~"$node"} == 1', query["expr"])
+        self.assertIn('perfmon_isp_lookup_interval_seconds'
+                      '{probe_node=~"$node"}', query["expr"])
+        self.assertIn('< on(probe_node) (2 * ', query["expr"])
+        self.assertIn('or on(probe_node) (0 * perfmon_isp_lookup_success'
+                      '{probe_node=~"$node"} + 300)', query["expr"])
+
 
 class ExporterTests(unittest.TestCase):
+    def test_configured_interval_drives_scheduler_and_metrics(self):
+        for interval in (None, 60):
+            lookup = exporter.Lookup() if interval is None else exporter.Lookup(interval)
+            expected = 300 if interval is None else interval
+            with patch.object(lookup, "update") as update:
+                with patch.object(exporter.time, "sleep",
+                                  side_effect=InterruptedError("stop")) as sleep:
+                    with self.assertRaises(InterruptedError):
+                        lookup.run()
+            update.assert_called_once_with()
+            sleep.assert_called_once_with(expected)
+            self.assertIn(f"perfmon_isp_lookup_interval_seconds {expected}\n",
+                          lookup.metrics())
+
+    def test_cli_interval_is_applied_before_server_starts(self):
+        for arguments, interval in (([], 300), (["--interval-seconds", "60"], 60)):
+            with patch.object(sys, "argv", ["isp-exporter.py", *arguments]):
+                with patch.object(exporter, "Lookup") as lookup:
+                    with patch.object(exporter, "ThreadingHTTPServer"):
+                        with patch.object(exporter.threading, "Thread"):
+                            exporter.main()
+            lookup.assert_called_once_with(interval=interval)
+
+    def test_invalid_cli_interval_fails_before_server_starts(self):
+        for value in ("0", "-1", "1.5", "1m", ""):
+            with patch.object(sys, "argv", ["isp-exporter.py",
+                                           "--interval-seconds", value]):
+                with patch.object(exporter, "ThreadingHTTPServer") as server:
+                    with redirect_stderr(StringIO()) as stderr:
+                        with self.assertRaises(SystemExit) as error:
+                            exporter.main()
+            self.assertEqual(error.exception.code, 2)
+            self.assertIn("--interval-seconds", stderr.getvalue())
+            server.assert_not_called()
+
+    def test_isp_switch_replaces_series_and_failure_leaves_no_isp(self):
+        lookup = exporter.Lookup()
+        for isp in ("First ISP", "Second ISP", "First ISP"):
+            data = payload()
+            data["as_organization"] = isp
+            with patch.object(exporter.urllib.request, "urlopen",
+                              return_value=BytesIO(json.dumps(data).encode())):
+                lookup.update()
+            isp_lines = [line for line in lookup.metrics().splitlines()
+                         if line.startswith('perfmon_isp_info{field="ISP",')]
+            self.assertEqual(isp_lines,
+                             [f'perfmon_isp_info{{field="ISP",value="{isp}"}} 1'])
+        with patch.object(exporter.urllib.request, "urlopen",
+                          side_effect=URLError("unavailable")):
+            with self.assertLogs(level="ERROR"):
+                lookup.update()
+        self.assertNotIn('perfmon_isp_info{field="ISP",', lookup.metrics())
+
     def test_ip_families_and_escaping(self):
         for ip in ("192.0.2.1", "2001:db8::1"):
             data = payload()
             data["ip"] = ip
             info = exporter.parse_info(data)
             self.assertEqual(info["Public IP"], ip)
+            self.assertEqual(info["IP version"], "IPv6" if ":" in ip else "IPv4")
+            self.assertEqual(info["ISP"], data["as_organization"])
+            self.assertEqual(info["Organization"], data["as_organization"])
+            self.assertEqual(info["Postal code"], "12345")
+            self.assertEqual(info["Timezone"], "Etc/UTC")
+            self.assertEqual(info["Coordinates"], "10.0, -20.0")
             lookup = exporter.Lookup()
             lookup.info = info
             metrics = lookup.metrics()
@@ -103,13 +204,17 @@ class ExporterTests(unittest.TestCase):
         for data in (None, [], "invalid"):
             with self.assertRaises(ValueError):
                 exporter.parse_info(data)
-        for change in ({"success": False}, {"ip": "invalid"},
+        for change in ({"ip": "invalid"},
                        {"latitude": float("nan")}, {"longitude": 181},
-                       {"connection": {"asn": 0}}):
+                       {"asn": 0}, {"asn": "AS0"}, {"asn": "AS-1"},
+                       {"asn": "AS64500junk"}, {"as_organization": ""},
+                       {"as_organization": None}, {"timezone": None}):
             data = payload()
             data.update(change)
             with self.assertRaises((ValueError, KeyError)):
                 exporter.parse_info(data)
+        with self.assertRaises(KeyError):
+            exporter.parse_info({"error": "service unavailable"})
 
     def test_failure_clears_old_details_and_recovery_replaces_them(self):
         lookup = exporter.Lookup()

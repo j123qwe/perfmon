@@ -30,6 +30,21 @@ secretGenerator:
       - grafana-admin.env
 
 patches:
+  # Optional ISP lookup delay (node-wide, independent of probe intervals in
+  # targets.yaml). Default: 300 seconds. Check provider limits before choosing
+  # a shorter interval, especially for nodes sharing a public IP.
+  # - target: {kind: DaemonSet, name: prober}
+  #   patch: |-
+  #     apiVersion: apps/v1
+  #     kind: DaemonSet
+  #     metadata:
+  #       name: prober
+  #     spec:
+  #       template:
+  #         spec:
+  #           containers:
+  #             - name: isp-exporter
+  #               args: ["--interval-seconds", "60"]
   # Ingress hostname, class and certificate issuer
   - target: {kind: Ingress, name: grafana}
     patch: |-

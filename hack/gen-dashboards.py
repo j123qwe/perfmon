@@ -157,6 +157,43 @@ UPDOWN = [{"type": "value", "options": {
     "1": {"text": "UP", "color": "green"}}}]
 
 
+def isp_info(field=None):
+    sel = 'probe_node=~"$node"'
+    fields = f'field="{field}",' if field else ""
+    info = f"perfmon_isp_info{{{fields}{sel}}}"
+    success = f"perfmon_isp_lookup_success{{{sel}}}"
+    # Historical samples from before interval configuration used five minutes.
+    interval = (f"(perfmon_isp_lookup_interval_seconds{{{sel}}} "
+                f"or on(probe_node) (0 * {success} + 300))")
+    # Exclude retired label sets still visible within the query lookback.
+    return (f"{info} and (timestamp({info}) == on(probe_node) group_left() "
+            f"timestamp({success})) "
+            f"and on(probe_node) ({success} == 1) "
+            f'and on(probe_node) (up{{job="isp",{sel}}} == 1) '
+            f"and on(probe_node) (time() - "
+            f"perfmon_isp_last_success_timestamp_seconds{{{sel}}} "
+            f"< on(probe_node) (2 * {interval} + 60))")
+
+
+def isp_history(pos):
+    return panel(
+        "state-timeline", "ISP over time", pos,
+        [target(isp_info("ISP"), "{{probe_node}} / {{value}}")],
+        desc="Last observed default-egress ISP at each point in the selected "
+             "time range, with a separate lane per node and ISP. The lookup "
+             "interval is configurable (five minutes by default); ISP metrics "
+             "are scraped every 30 seconds, not per "
+             "probe. Failed, unreachable or stale lookups leave gaps. "
+             "Compare switches with the shared crosshair on the graphs below.",
+        defaults={"color": {"mode": "palette-classic"},
+                  "custom": {"fillOpacity": 80, "lineWidth": 0,
+                             "spanNulls": False}},
+        options={"showValue": "never", "mergeValues": True,
+                 "rowHeight": 0.8,
+                 "legend": {"showLegend": False},
+                 "tooltip": {"mode": "single"}})
+
+
 # --------------------------------------------------------------------------
 # Backhaul (ICMP)
 # --------------------------------------------------------------------------
@@ -198,18 +235,14 @@ def backhaul():
              "Standard deviation of RTT over the last 2 minutes.",
              color="value", decimals=2),
 
-        ts("Round-trip time (avg)", (0, 4, 24, 9), [target(avg_rtt(W))], "s",
-           "Mean RTT of answered probes per graph interval. Zoom in to see "
-           "individual probes."),
-        ts("Round-trip time (max)", (0, 13, 12, 8),
+        isp_history((0, 4, 24, 6)),
+        ts("Round-trip time (max)", (0, 10, 12, 8),
            [target(f"max_over_time({rtt}[{W}])")], "s",
            "Worst single probe per graph interval; shows spikes that the "
            "average hides."),
-        ts("Jitter", (12, 13, 12, 8), [target(jitter)], "s",
-           "Standard deviation of RTT over a rolling 2 minute window."),
-        ts("Packet loss", (0, 21, 24, 7), [target(loss(W))], "percent",
+        ts("Packet loss", (12, 10, 12, 8), [target(loss(W))], "percent",
            "Share of probes lost per graph interval.", draw="bars"),
-        panel("state-timeline", "Reachability", (0, 28, 24, 6),
+        panel("state-timeline", "Reachability", (0, 18, 24, 6),
               [target(f"min_over_time({ok}[{W}])")],
               desc="Red where at least one probe in the interval was lost.",
               defaults={"mappings": UPDOWN, "color": {"mode": "thresholds"},
@@ -220,7 +253,12 @@ def backhaul():
                        "rowHeight": 0.8,
                        "legend": {"showLegend": False},
                        "tooltip": {"mode": "single"}}),
-        panel("table", "Summary for selected time range", (0, 34, 24, 8), [
+        ts("Round-trip time (avg)", (0, 24, 24, 9), [target(avg_rtt(W))], "s",
+           "Mean RTT of answered probes per graph interval. Zoom in to see "
+           "individual probes."),
+        ts("Jitter", (0, 33, 24, 8), [target(jitter)], "s",
+           "Standard deviation of RTT over a rolling 2 minute window."),
+        panel("table", "Summary for selected time range", (0, 41, 24, 8), [
             target(f"{by} ({loss(R)})", ref="A", instant=True, fmt="table"),
             target(f"{by} ({avg_rtt(R)})", ref="B", instant=True, fmt="table"),
             target(f"{by} (min_over_time(({rtt} > 0)[{R}:]))", ref="C",
@@ -317,17 +355,15 @@ def http_dns():
 
 def isp():
     sel = 'probe_node=~"$node"'
-    fresh = (f'and on(probe_node) (perfmon_isp_lookup_success{{{sel}}} == 1) '
-             f'and on(probe_node) (up{{job="isp",{sel}}} == 1) '
-             f'and on(probe_node) (time() - '
-             f'perfmon_isp_last_success_timestamp_seconds{{{sel}}} < 660)')
     p = [
         panel("text", "", (0, 0, 24, 4), [], transparent=True, options={
             "mode": "markdown",
             "content": "### Internet connection\n"
                        "Public egress information for each selected **probe node**, "
-                       "not your browser. Looked up every five minutes via "
-                       "[ipwho.is](https://ipwhois.io/). Location is approximate. "
+                       "not your browser. Looked up at the configured interval "
+                       "(five minutes by default) via "
+                       "[ip0.me](https://ip0.me/). ISP uses its AS organization "
+                       "field. Location is approximate. "
                        "VPNs, NAT and proxies may identify the exit provider instead "
                        "of the physical ISP. Only the default egress address family "
                        "is shown; this does not identify every uplink. "
@@ -348,13 +384,15 @@ def isp():
         stat("Last successful lookup age", (16, 4, 8, 4),
              [target(f"time() - (perfmon_isp_last_success_timestamp_seconds"
                      f"{{{sel}}} > 0)", "{{probe_node}}", instant=True)],
-             "s", desc="No value until the first successful lookup.",
-             th=thresholds((None, "green"), (660, "red")), decimals=0),
+             "s", desc="No value until the first successful lookup. Details "
+                       "expire after two configured lookup intervals plus "
+                       "60 seconds.",
+             color="value", decimals=0),
     ]
     for title, x in (("Public IP", 0), ("ISP", 8), ("ASN", 16)):
         p.append(panel(
             "stat", title, (x, 8, 8, 4),
-            [target(f'perfmon_isp_info{{field="{title}",{sel}}} {fresh}',
+            [target(isp_info(title),
                     "{{value}} ({{probe_node}})", instant=True)],
             options={"reduceOptions": {"calcs": ["lastNotNull"],
                                        "fields": "", "values": False},
@@ -362,7 +400,7 @@ def isp():
                      "graphMode": "none"}))
     p.append(panel(
         "table", "Connection details", (0, 12, 24, 15),
-        [target(f"perfmon_isp_info{{{sel}}} {fresh}", instant=True, fmt="table")],
+        [target(isp_info(), instant=True, fmt="table")],
         transformations=[{"id": "organize", "options": {
             "includeByName": {"probe_node": True, "field": True, "value": True},
             "indexByName": {"probe_node": 0, "field": 1, "value": 2},

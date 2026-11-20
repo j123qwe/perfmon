@@ -1,6 +1,7 @@
 # One prober per node: blackbox_exporter runs the probes, vmagent schedules
 # them (per-target interval) and ships results to VictoriaMetrics. The ISP
-# exporter looks up this node's public egress connection every five minutes.
+# exporter looks up this node's public egress connection every five minutes
+# by default; overlays can set its --interval-seconds argument.
 #
 # hostNetwork is deliberate: probes leave from the router's own network
 # namespace, so they follow its routing table and can be pinned to a specific
