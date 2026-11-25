@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Focused tests for the tabbed dashboard and ISP exporter."""
+"""Focused tests for ingress, the tabbed dashboard and ISP exporter."""
 import importlib.util
 import json
 import pathlib
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stderr
 from io import BytesIO, StringIO
@@ -23,6 +26,47 @@ def load(name, path):
 
 dashboards = load("dashboards", "hack/gen-dashboards.py")
 exporter = load("exporter", "base/prober/isp-exporter.py")
+
+
+class IngressTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("kustomize"), "kustomize is not installed")
+    def test_optional_default_ingress_preserves_named_ingress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            shutil.copytree(ROOT / "base", root / "base")
+            overlay = root / "overlays" / "example"
+            shutil.copytree(ROOT / "overlays" / "example", overlay,
+                            ignore=shutil.ignore_patterns("grafana-admin.env"))
+            (overlay / "grafana-admin.env").write_text("user=test\npassword=test\n")
+            kustomization = overlay / "kustomization.yaml"
+
+            def ingresses():
+                rendered = subprocess.run(
+                    ["kustomize", "build", str(overlay)],
+                    check=True, capture_output=True, text=True).stdout
+                return [doc.strip() for doc in rendered.split("\n---\n")
+                        if "\nkind: Ingress\n" in doc]
+
+            disabled = ingresses()
+            self.assertEqual(len(disabled), 1)
+            config = kustomization.read_text()
+            option = "  # - grafana-default-ingress.yaml"
+            self.assertIn(option, config)
+            kustomization.write_text(config.replace(
+                option, "  - grafana-default-ingress.yaml"))
+            enabled = ingresses()
+            self.assertEqual(len(enabled), 2)
+            self.assertIn(disabled[0], enabled)
+            default = next(doc for doc in enabled if "\n  name: grafana-default\n" in doc)
+            self.assertIn("traefik.ingress.kubernetes.io/router.tls: \"true\"", default)
+            self.assertIn("traefik.ingress.kubernetes.io/router.priority: \"1\"", default)
+            self.assertIn("  namespace: perfmon\n", default)
+            self.assertIn("  ingressClassName: traefik\n", default)
+            self.assertNotIn("host:", default)
+            self.assertIn("            name: grafana\n", default)
+            self.assertIn("              name: http\n", default)
+            self.assertIn("        path: /\n        pathType: Prefix", default)
+            self.assertNotIn("cert-manager.io/", default)
 
 
 def payload():

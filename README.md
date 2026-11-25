@@ -40,6 +40,31 @@ kubectl apply -k overlays/<site>
 Grafana is served at the overlay's ingress host (no login needed to view). The
 admin login for editing is in `overlays/<site>/grafana-admin.env`.
 
+### Default HTTPS application
+
+For Traefik, uncomment `grafana-default-ingress.yaml` under `resources` in the
+site's `kustomization.yaml` and re-apply. Set its `ingressClassName` to the
+same Traefik class as the named Grafana ingress. The separate, low-priority
+HTTPS catch-all sends otherwise unmatched hosts and paths to Grafana, including
+requests such as `https://192.168.77.66/`. Other matching Traefik routes
+normally take precedence; another catch-all or explicit priorities can cause
+conflicts. This applies to traffic reaching Traefik, not necessarily every
+worker-node IP: ensure the load balancer or node exposes Traefik on port 443.
+HTTP routing and HTTP-to-HTTPS redirects are not configured by this option.
+
+The existing hostname and its cert-manager certificate remain unchanged. An IP
+address does not match that hostname certificate, so Traefik normally presents
+its default certificate for IP access. Browsers will warn unless Traefik's
+default TLS certificate has the IP address as an IP subject alternative name
+and is trusted by the client. A private IP needs a suitable private CA or
+self-signed certificate trusted by clients; configure it in Traefik's default
+TLS store. Strict SNI checking must not reject clients without SNI. Enabling
+this option exposes anonymous Grafana viewing on unmatched hosts as well.
+
+To disable it, remove the resource and delete the previously applied ingress
+(`kubectl -n perfmon delete ingress grafana-default`); `kubectl apply -k` does
+not remove resources omitted from the overlay.
+
 ## Add, remove or change targets
 
 Edit `overlays/<site>/targets.yaml` and re-apply. The prober restarts with the

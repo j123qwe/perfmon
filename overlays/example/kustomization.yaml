@@ -5,6 +5,8 @@ kind: Kustomization
 
 resources:
   - ../../base
+  # Optional Traefik HTTPS catch-all; see "Default HTTPS application" in README.
+  # - grafana-default-ingress.yaml
 
 # Site-specific probe targets and (optionally) probe modules.
 configMapGenerator:
